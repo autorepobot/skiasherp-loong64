@@ -38,19 +38,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          wget -O qemu-linux-x64.tar.gz "https://github.com/xujiegb/qemu-linux-prebuild/releases/download/${QEMU_VERSION}/qemu-linux-x64.tar.gz"
+
+          wget -O qemu-linux-x64.tar.gz \
+            "https://github.com/xujiegb/qemu-linux-prebuild/releases/download/${QEMU_VERSION}/qemu-linux-x64.tar.gz"
+
           tar -xzf qemu-linux-x64.tar.gz
           mkdir -p "$HOME/qemu-install"
           rsync -a qemu-linux-x64/ "$HOME/qemu-install/"
+
           "$HOME/qemu-install/bin/qemu-system-loongarch64" --version
 
       - name: Download loong64 qcow2 and EFI firmware
         shell: bash
         run: |
           set -euo pipefail
+
           wget -O "$QCOW2_IMAGE" "$QCOW2_URL"
           wget -O "$EFI_CODE" "$EFI_CODE_URL"
           wget -O "$EFI_VARS" "$EFI_VARS_URL"
+
           qemu-img info "$QCOW2_IMAGE"
 
       - name: Build SkiaSharp loong64 in VM
@@ -125,15 +131,17 @@ jobs:
           run_cmd "printf 'nameserver 10.0.2.3\nnameserver 1.1.1.1\n' >/etc/resolv.conf"
 
           run_cmd "apt-get update || apt-get update || apt-get update"
-          run_cmd "DEBIAN_FRONTEND=noninteractive apt-get install -y git curl wget ca-certificates tar gzip unzip xz-utils clang ninja-build python3 build-essential pkg-config fontconfig libfontconfig1 libfontconfig-dev libfreetype-dev libpng-dev zlib1g-dev"
+
+          run_cmd "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git curl wget ca-certificates tar gzip unzip xz-utils clang ninja-build python3 build-essential pkg-config fontconfig libfontconfig1 libfontconfig-dev libfreetype-dev libpng-dev zlib1g-dev binutils"
 
           run_cmd "rm -rf /root/SkiaSharp"
           run_cmd "git clone --depth=1 --recursive --shallow-submodules https://github.com/mono/SkiaSharp.git /root/SkiaSharp"
-          run_cmd "cd /root/SkiaSharp && git fetch --depth=1 origin $skiasharp_ref || true"
-          run_cmd "cd /root/SkiaSharp && git checkout $skiasharp_ref"
+
+          run_cmd "cd /root/SkiaSharp && git fetch --depth=1 origin tag $skiasharp_ref || git fetch --depth=1 origin $skiasharp_ref"
+          run_cmd "cd /root/SkiaSharp && git checkout FETCH_HEAD"
           run_cmd "cd /root/SkiaSharp && git submodule update --init --recursive --depth=1"
 
-          send -- "cd /root/SkiaSharp; cat >/tmp/build-skiasharp.sh <<'SCRIPT'\nset +e\nset -o pipefail\nexport CFLAGS=\"\${CFLAGS:-} -DPNG_LOONGARCH_LSX_OPT=0\"\nexport CXXFLAGS=\"\${CXXFLAGS:-} -DPNG_LOONGARCH_LSX_OPT=0\"\nexport CPPFLAGS=\"\${CPPFLAGS:-} -DPNG_LOONGARCH_LSX_OPT=0\"\nbash -x build.sh --variant=debian --buildarch=loongarch64 --target=externals-linux 2>&1 | tee /tmp/skiasharp-build.log\nrc=\$?\nmkdir -p /workspace/dist/skiasharp-loong64\nfind /root/SkiaSharp/output -type f \\( -name 'libSkiaSharp.so' -o -name 'libHarfBuzzSharp.so' \\) -exec cp -av {} /workspace/dist/skiasharp-loong64/ \\; 2>/dev/null || true\npatchelf --print-needed /workspace/dist/skiasharp-loong64/libSkiaSharp.so 2>/dev/null || true\ntar -C /workspace/dist -czf /workspace/dist/skiasharp-loong64-native.tar.gz skiasharp-loong64 2>/dev/null || true\necho __BUILD_DONE__\$rc\nSCRIPT\napt-get install -y patchelf || true\nbash /tmp/build-skiasharp.sh\r"
+          send -- "cd /root/SkiaSharp; cat >/tmp/build-skiasharp.sh <<'SCRIPT'\nset +e\nset -o pipefail\nexport CFLAGS=\"\${CFLAGS:-} -DPNG_LOONGARCH_LSX_OPT=0\"\nexport CXXFLAGS=\"\${CXXFLAGS:-} -DPNG_LOONGARCH_LSX_OPT=0\"\nexport CPPFLAGS=\"\${CPPFLAGS:-} -DPNG_LOONGARCH_LSX_OPT=0\"\nbash -x build.sh --variant=debian --buildarch=loongarch64 --target=externals-linux 2>&1 | tee /tmp/skiasharp-build.log\nrc=\$?\nmkdir -p /workspace/dist/skiasharp-loong64\nfind /root/SkiaSharp/output -type f -name 'libSkiaSharp.so' -exec cp -av {} /workspace/dist/skiasharp-loong64/libSkiaSharp.so \\; 2>/dev/null || true\nfind /root/SkiaSharp/output -type f -name 'libHarfBuzzSharp.so' -exec cp -av {} /workspace/dist/skiasharp-loong64/libHarfBuzzSharp.so \\; 2>/dev/null || true\nif [ -f /workspace/dist/skiasharp-loong64/libSkiaSharp.so ]; then\n  echo '==== libSkiaSharp.so NEEDED ===='\n  readelf -d /workspace/dist/skiasharp-loong64/libSkiaSharp.so | grep NEEDED || true\n  echo '==== libSkiaSharp.so LSX symbol check ===='\n  readelf -Ws /workspace/dist/skiasharp-loong64/libSkiaSharp.so | grep png_init_filter_functions_lsx || true\nelse\n  echo 'libSkiaSharp.so not found'\n  rc=1\nfi\ntar -C /workspace/dist -czf /workspace/dist/skiasharp-loong64-native.tar.gz skiasharp-loong64 2>/dev/null || true\necho __BUILD_DONE__\$rc\nSCRIPT\nbash /tmp/build-skiasharp.sh\r"
 
           expect {
             -re "__BUILD_DONE__0" {
